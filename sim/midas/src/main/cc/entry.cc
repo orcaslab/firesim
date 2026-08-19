@@ -1,5 +1,6 @@
 // See LICENSE for license details.
 
+#include <cstdio>
 #include <memory>
 
 #include "core/config.h"
@@ -35,7 +36,14 @@ std::unique_ptr<simif_t> simulator; // must exist for dpi.cc calls in emulation,
 std::unique_ptr<simulation_t> simulation; // must be global to avoid deletion
 
 // Entry point of the driver.
+// Startup markers on stderr. Widget construction performs MMIO, and if the
+// platform layer is not yet servicing it the process wedges here with no output
+// at all -- indistinguishable from a slow model. stderr because stdout is
+// block-buffered when redirected.
+#define ENTRY_MARK(s_) do { fprintf(stderr, "[entry] " s_ "\n"); fflush(stderr); } while (0)
+
 int entry(int argc, char **argv) {
+  ENTRY_MARK("entered");
   // must have this exist for *.const.h
   std::vector<std::string> args(argv + 1, argv + argc);
 
@@ -43,9 +51,11 @@ int entry(int argc, char **argv) {
   simulator = create_simif(conf_target, argc, argv);
   // must have this exist for *.const.h
   auto &simif = *simulator;
+  ENTRY_MARK("simif created");
 
   /* clang-format off */
   // NOLINTBEGIN
+  ENTRY_MARK("constructing widget registry");
   widget_registry_t *widget_registry_ptr = new widget_registry_t(); // must be never deallocated to avoid deletion
   // must have this for *.const.h
   widget_registry_t &registry = *widget_registry_ptr;
@@ -59,9 +69,11 @@ int entry(int argc, char **argv) {
     #define GET_CORE_CONSTRUCTOR
     #include "FireSim-generated.const.h"
     #undef GET_CORE_CONSTRUCTOR
+    ENTRY_MARK("core widgets constructed");
     #define GET_MANAGED_STREAM_CONSTRUCTOR
     #include "FireSim-generated.const.h"
     #undef GET_MANAGED_STREAM_CONSTRUCTOR
+    ENTRY_MARK("stream engines constructed");
     #define GET_BRIDGE_CONSTRUCTOR
     #include "FireSim-generated.const.h"
     #undef GET_BRIDGE_CONSTRUCTOR
@@ -69,9 +81,21 @@ int entry(int argc, char **argv) {
   // NOLINTEND
   /* clang-format on */
 
+  ENTRY_MARK("bridges constructed");
+
   // Create the simulation instance.
   simulation = create_simulation(simif, *widget_registry_ptr, args);
 
   // Run the simulation with the given implementation.
-  return simif.run(*simulation);
+  ENTRY_MARK("entering simif.run");
+  const int rc = simif.run(*simulation);
+
+  // Tear these down here rather than leaving them to static destruction. The
+  // platform layer holds handles into libraries with statics of their own --
+  // XRT's device registry among them -- and by the time exit handlers run those
+  // may already be gone, so destroying the interface then walks freed state.
+  // Order mirrors construction. Nothing below may use `simif`.
+  simulation.reset();
+  simulator.reset();
+  return rc;
 }

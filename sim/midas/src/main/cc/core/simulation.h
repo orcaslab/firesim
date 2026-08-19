@@ -130,6 +130,10 @@ private:
    */
   bool do_zero_out_dram = false;
 
+  /// Diagnostic: round-trip a pattern through the LoadMem widget after
+  /// loading, to prove the target DRAM path independently of the DUT.
+  bool do_memcheck = false;
+
   /**
    * If set, read the presence register, check it, and exit the simulation
    * cleanly
@@ -145,7 +149,27 @@ private:
   midas_time_t end_time;
   std::optional<uint64_t> start_hcycle;
   std::optional<uint64_t> end_hcycle;
+  uint64_t start_tcycle = 0;
   uint64_t end_tcycle = 0;
+
+  /// Target cycles completed by *this* run.
+  ///
+  /// The counter lives in fabric and persists while the bitstream stays
+  /// programmed, so it must be rebased against the start sample -- host
+  /// cycles are already handled this way.
+  ///
+  /// It counts cycles *started*, so one cycle is in flight at any sample taken
+  /// after the target's first. That cancels between the two samples, except at
+  /// the counter's origin, where the start sample sees none.
+  ///
+  /// Saturates rather than wrapping: a device reprogrammed mid-run can leave
+  /// end < start, and an unsigned wrap would report a nonsense duration.
+  uint64_t elapsed_tcycles() const {
+    if (end_tcycle <= start_tcycle) {
+      return 0;
+    }
+    return end_tcycle - start_tcycle - (start_tcycle == 0 ? 1 : 0);
+  }
 };
 
 #endif // __SIMULATION_H

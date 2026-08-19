@@ -1,4 +1,8 @@
+#include <algorithm>
 #include <cassert>
+#include <stdexcept>
+#include <string>
+#include <vector>
 
 #include <fcntl.h>
 #include <iostream>
@@ -12,6 +16,7 @@
 #include "experimental/xrt_device.h"
 #include "experimental/xrt_ip.h"
 #include "experimental/xrt_kernel.h"
+#include "experimental/xrt_xclbin.h"
 
 class simif_vitis_t final : public simif_t, public FPGAManagedStreamIO {
 public:
@@ -42,16 +47,80 @@ private:
   xrt::uuid uuid;
   xrt::ip kernel_handle;
   xrt::run run_handle;
+  /// The device-side memory backing host_mem_0. Must outlive the
+  /// simulation: as a constructor local its allocation is freed on
+  /// return, leaving the window pointing at memory XRT may reuse.
+  xrt::bo fpga_mem_0;
 };
 
-constexpr size_t u250_dram_channel_size_bytes = 16ULL * 1024 * 1024 * 1024;
-/**
- * We currently support only a single FPGA DRAM channel. When the buffer is
- * allocated in XRT, we'd generally have to write the offset back to the kernel
- * using MMIO. For now we've hardcoded the offset for a U250 with no other
- * concurrently running kernel.
- */
-constexpr uint64_t u250_dram_expected_offset = 0x4000000000L;
+/// Size of the device-memory window backing host_mem_0.
+///
+/// This must cover the target's whole address map, not merely the part of it a
+/// given test happens to touch. A 32-bit target places its stack at the top of
+/// 4 GiB and its program image well above any buffer it allocates, so anything
+/// smaller leaves those accesses unserved: writes are dropped and reads return
+/// an address-independent value, with no error anywhere to say so.
+///
+/// One U55C HBM pseudo-channel is 512 MB, so 4 GiB spans eight of them and
+/// `--connectivity.sp` must bind host_mem_0 to a matching range (HOST_MEM_SP in
+/// the Vitis kernel Makefile). The two are a pair: widening one alone silently
+/// truncates.
+constexpr size_t host_mem_0_size_default = 4ULL * 1024 * 1024 * 1024;
+
+/// Overridable so a smaller window can be paired with a narrower
+/// `--connectivity.sp`, which is what makes a single-channel control experiment
+/// possible without editing and rebuilding this file.
+static size_t host_mem_0_size() {
+  if (const char *env = getenv("FIRESIM_HOST_MEM_SIZE")) {
+    const unsigned long long v = strtoull(env, nullptr, 0);
+    if (v > 0) {
+      return static_cast<size_t>(v);
+    }
+  }
+  return host_mem_0_size_default;
+}
+
+/// Allocates the device-memory window backing host_mem_0, choosing a memory
+/// region that can hold all of it. Tries the largest usable regions first so a
+/// range group is preferred over any single pseudo-channel inside it.
+static xrt::bo allocate_host_mem(const xrt::device &device,
+                                 const std::string &binary_file,
+                                 size_t bytes) {
+  xrt::xclbin xclbin(binary_file);
+  const auto mems = xclbin.get_mems();
+
+  std::vector<size_t> candidates;
+  for (size_t i = 0; i < mems.size(); ++i) {
+    if (mems[i].get_used()) {
+      candidates.push_back(i);
+    }
+  }
+  std::stable_sort(candidates.begin(), candidates.end(),
+                   [&mems](size_t a, size_t b) {
+                     return mems[a].get_size_kb() > mems[b].get_size_kb();
+                   });
+
+  for (size_t idx : candidates) {
+    try {
+      xrt::bo bo(device, bytes, xrt::bo::flags::device_only, idx);
+      std::cerr << "[vitis] host_mem_0 backed by memory index " << idx << " ("
+                << mems[idx].get_tag() << ")" << std::endl;
+      return bo;
+    } catch (const std::exception &) {
+      // Too small, or not allocatable: try the next region.
+    }
+  }
+
+  std::cerr << "[vitis] no memory region can back a 0x" << std::hex << bytes
+            << std::dec << "-byte host_mem_0 window. Topology:" << std::endl;
+  for (size_t i = 0; i < mems.size(); ++i) {
+    std::cerr << "[vitis]   [" << i << "] " << mems[i].get_tag() << " "
+              << mems[i].get_size_kb() << " KB"
+              << (mems[i].get_used() ? " (used)" : "") << std::endl;
+  }
+  throw std::runtime_error("host_mem_0 window does not fit any memory region; "
+                           "widen --connectivity.sp (HOST_MEM_SP)");
+}
 
 simif_vitis_t::simif_vitis_t(const TargetConfig &config,
                              const std::vector<std::string> &args)
@@ -92,22 +161,24 @@ simif_vitis_t::simif_vitis_t(const TargetConfig &config,
   kernel_handle = xrt::ip(device_handle, uuid, "firesim");
 
   // Intialize FPGA-DRAM regions.
-  // The final argument here is the bank index for the dram channel.
-  // I used xclbinutil to find this
-  // https://xilinx.github.io/XRT/master/html/xclbintools.html
-  auto fpga_mem_0 = xrt::bo(device_handle,
-                            u250_dram_channel_size_bytes,
-                            xrt::bo::flags::device_only,
-                            0);
+  //
+  // The last argument is a memory index into the xclbin's topology. Binding
+  // host_mem_0 to a range of pseudo-channels makes the region a memory *group*
+  // whose index is not knowable from the port name, and xrt::ip -- unlike
+  // xrt::kernel -- exposes no group_id() to ask for it. So try the indices the
+  // xclbin reports until one can back the whole window, and fail loudly with
+  // the topology printed if none can. Quietly settling for a smaller region is
+  // the exact failure this window size exists to prevent.
+  fpga_mem_0 = allocate_host_mem(device_handle, binary_file, host_mem_0_size());
 
-  if (fpga_mem_0.address() != u250_dram_expected_offset) {
-    std::cerr
-        << "Allocated device_only buffer address not match the expected offset."
-        << std::endl;
-    std::cerr << "Expected: " << u250_dram_expected_offset
-              << "Received: " << fpga_mem_0.address() << std::endl;
-    exit(1);
-  }
+  // NOTE: the kernel's host_mem_0_offset register (package_kernel.tcl, s_axi_lite
+  // 0x010) is IP-XACT metadata only -- it does not appear in the generated RTL,
+  // and writing it would land in FireSim's own widget MMIO space. Address
+  // mapping into HBM is done by the platform memory subsystem via
+  // --connectivity.sp, so nothing needs programming here.
+  std::cerr << "[vitis] host_mem_0 base = 0x" << std::hex
+           << fpga_mem_0.address() << " size = 0x" << host_mem_0_size()
+           << std::dec << std::endl;
 }
 
 void simif_vitis_t::write(size_t addr, uint32_t data) {

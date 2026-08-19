@@ -47,6 +47,17 @@ run-sim:   VPP_TARGET_SPECIFIC_ARGS = --target $(TARGET) --config $(buildroot)/s
 # current support on firesim1
 DEVICE ?= xilinx_u250_gen3x16_xdma_3_1_202020_1
 
+# Memory resource backing the simulator's host_mem_0 port. Upstream hardcodes
+# DDR[0]; HBM-only cards (Alveo U55C) expose no DDR bank at all, so this must
+# be overridable per platform.
+#
+# The range must span the target's whole address map: a 32-bit target needs
+# 4 GiB, which on a U55C is eight 512 MB HBM pseudo-channels. It is bound
+# together with host_mem_0_size_bytes in simif_vitis.cc -- the port reaches
+# what this binds, and the driver backs what that allocates, so widening
+# either alone silently truncates.
+HOST_MEM_SP ?= HBM[0:7]
+
 # Provide's the desired simulator frequency. This is generated from the clock
 # provided to the kernel using an internal MMCM.
 FREQUENCY ?= 90
@@ -113,7 +124,7 @@ VPP_OTHER_FLAGS += --save-temps -R2 -g
 VPP_MSG_FLAGS = --message-rules $(MSG_RULES) --log_dir $(LOG_SUBDIR) --report_dir $(REPORT_SUBDIR)
 VPP_COMMON_ARGS = \
 	--platform $(DEVICE) \
-	--temp_dir $(TEMP_SUBDIR) \
+	--temp_dir vpp_temp.$(XSA) \
 	$(VPP_OTHER_FLAGS) \
 	$(VPP_MSG_FLAGS)
 
@@ -168,7 +179,7 @@ vpp_config_overlay_args = $(addprefix --config ,$(vpp_config_overlays))
 	mkdir -p $(@D)
 	# Move into temp directory to avoid polluting top-level workdir
 	cd $(@D)/..; $(VPP) $(vpp_config_overlay_args) $(VPP_TARGET_SPECIFIC_ARGS) $(VPP_COMMON_ARGS) \
-	--connectivity.sp $(PROJECT_NAME)_1.host_mem_0:DDR[0] \
+	--connectivity.sp $(PROJECT_NAME)_1.host_mem_0:$(HOST_MEM_SP) \
 	--link $(VPP_LDFLAGS) -o $@ $<
 
 

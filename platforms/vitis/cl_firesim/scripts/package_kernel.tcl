@@ -19,7 +19,9 @@ set path_to_hdl "../design"
 set path_to_packaged "./packaged_kernel_${suffix}"
 set path_to_tmp_project "./tmp_kernel_pack_${suffix}"
 
-set projPart "xcu250-figd2104-2L-e"
+# Upstream hardcodes the U250 part; the kernel-packaging project must use
+# the part of the target platform or its IP is generated for the wrong device.
+set projPart "xcu55c-fsvh2892-2L-e"
 
 set base_filename "FireSim-generated"
 set synth_xdc_path "${path_to_hdl}/${base_filename}.synthesis.xdc"
@@ -43,6 +45,45 @@ add_files -norecurse [ list \
     $impl_xdc_path \
     $path_to_hdl/FireSim-generated.post-processed.sv \
 ]
+
+# The design under test may resolve most of its RTL by library search during
+# simulation, which Vivado has no equivalent for. When a flattened source list is
+# supplied, every file in it is added explicitly and its search paths recorded.
+if {[info exists ::env(VORTEX_VIVADO_SRCS)]} {
+    set vortex_list $::env(VORTEX_VIVADO_SRCS)
+    if {![file exists $vortex_list]} {
+        puts "ERROR: VORTEX_VIVADO_SRCS points at a missing file: $vortex_list"
+        exit 1
+    }
+    set fh [open $vortex_list r]
+    set vortex_files {}
+    set vortex_incdirs {}
+    while {[gets $fh line] >= 0} {
+        set line [string trim $line]
+        if {$line eq ""} { continue }
+        if {[string match "+incdir+*" $line]} {
+            lappend vortex_incdirs [string range $line 8 end]
+        } elseif {[string match "+*" $line]} {
+            continue
+        } else {
+            lappend vortex_files $line
+        }
+    }
+    close $fh
+    if {[llength $vortex_files] == 0} {
+        puts "ERROR: no sources listed in $vortex_list"
+        exit 1
+    }
+    puts "collected [llength $vortex_files] design sources from $vortex_list"
+    # Deliberately not added to this project. ipx::package_project infers bus
+    # interfaces from every file it imports, and a design carrying SystemVerilog
+    # interfaces cannot be expressed in IP-XACT -- packaging fails on ports it
+    # has no way to represent. The files are attached to the packaged core
+    # further down instead, so they ship with the IP without being parsed here.
+    if {[llength $vortex_incdirs] > 0} {
+        set_property include_dirs $vortex_incdirs [get_filesets sources_1]
+    }
+}
 
 set_property USED_IN_SYNTHESIS false     [get_files $impl_xdc_path]
 set_property USED_IN_IMPLEMENTATION true [get_files $impl_xdc_path]
@@ -100,6 +141,37 @@ set_property sdx_kernel true $core
 set_property sdx_kernel_type rtl $core
 set_property supported_families { } $core
 set_property auto_family_support_level level_2 $core
+# Deliver the design sources with the packaged core. They are added to the
+# synthesis file group directly rather than through the project, so synthesis
+# sees them while the packager's interface inference never does.
+if {[info exists vortex_files] && [llength $vortex_files] > 0} {
+    # Both groups: synthesis builds the bitstream, behavioural simulation builds
+    # hardware emulation, and a file registered in only one is invisible to the
+    # other flow.
+    set target_fgs [list \
+        [ipx::get_file_groups xilinx_anylanguagesynthesis -of_objects $core] \
+        [ipx::get_file_groups xilinx_anylanguagebehavioralsimulation -of_objects $core]]
+    # Copied into the core rather than referenced where they lie: a path outside
+    # the component root does not survive IP delivery, so the linker would find
+    # the instantiation but not the module.
+    set vortex_dst $path_to_packaged/src
+    file mkdir $vortex_dst
+    foreach vf $vortex_files {
+        set base [file tail $vf]
+        file copy -force $vf $vortex_dst/$base
+        foreach fg $target_fgs {
+            set added [ipx::add_file src/$base $fg]
+            if {[string match "*.vh" $base] || [string match "*.svh" $base]} {
+                set_property type verilogSource $added
+                set_property is_include true $added
+            } elseif {[string match "*.sv" $base]} {
+                set_property type systemVerilogSource $added
+            }
+        }
+    }
+    puts "attached [llength $vortex_files] design sources to the packaged core"
+}
+
 ipx::create_xgui_files $core
 ipx::update_checksums $core
 ipx::check_integrity -kernel $core

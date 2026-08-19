@@ -33,7 +33,13 @@ set suffix "${krnl_name}_${target}_${device}"
 set script_path [file dirname [file normalize [info script]]]
 
 #source -notrace ./scripts/package_kernel.tcl
+# Vivado's create_project chdirs into the project dir, and package_kernel.tcl's
+# closing "close_project -delete" then removes it -- leaving the process CWD
+# pointing at a deleted directory. package_xo subsequently dies inside
+# boost::filesystem::current_path(). Save the CWD and restore it below.
+set origin_cwd [pwd]
 source ${script_path}/package_kernel.tcl
+cd $origin_cwd
 
 if {[file exists "${xoname}"]} {
     file delete -force "${xoname}"
