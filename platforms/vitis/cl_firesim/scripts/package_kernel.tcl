@@ -97,6 +97,20 @@ foreach script $ipgen_scripts {
     source $script
 }
 
+# The design under test may instantiate vendor cores it does not generate itself
+# (Vortex's FPU and RTU use Xilinx floating_point IP on Vivado). Those are
+# generated ahead of packaging, for this part, and read in here so they are
+# generated and packaged with the kernel like the shim's own IP.
+if {[info exists ::env(VORTEX_XILINX_IP_DIR)]} {
+    set vortex_ips [glob -nocomplain $::env(VORTEX_XILINX_IP_DIR)/*/*.xci]
+    if {[llength $vortex_ips] == 0} {
+        puts "ERROR: VORTEX_XILINX_IP_DIR has no generated cores: $::env(VORTEX_XILINX_IP_DIR)"
+        exit 1
+    }
+    read_ip $vortex_ips
+    puts "read [llength $vortex_ips] design IP cores from $::env(VORTEX_XILINX_IP_DIR)"
+}
+
 # Use RTL models instead of systemC-based ones for Xilinx IP.
 # - The AXI clock converter IP does not appear to function correctly when running on
 #   millennium, which leads to lost transactions. and the RTL models are easier to debug
