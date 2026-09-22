@@ -197,6 +197,9 @@ if {[llength $vortex_ips] > 0} {
     file mkdir $path_to_packaged/src/ip
     foreach xci $vortex_ips {
         set name [file rootname [file tail $xci]]
+        # Into a fresh directory: onto an existing one, file copy nests the source
+        # inside it and the stale core from the previous package stays referenced.
+        file delete -force $path_to_packaged/src/ip/$name
         file copy -force [file dirname $xci] $path_to_packaged/src/ip/$name
         foreach fg $target_fgs {
             set added [ipx::add_file src/ip/$name/$name.xci $fg]
