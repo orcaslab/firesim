@@ -4,7 +4,8 @@
 #   make bitstream TARGET=hw|sim DEVICE=<part> HOST_MEM_SP=<tag> FREQUENCY=<MHz>
 #
 # The design sources and vendor cores of the target under test are attached to
-# the kernel through VORTEX_VIVADO_SRCS and VORTEX_XILINX_IP_DIR when set.
+# the kernel through VORTEX_VIVADO_SRCS and VORTEX_XILINX_IP_DIR when set, and
+# VORTEX_PRE_OPT_TCL runs before opt_design.
 
 buildroot := $(abspath .)
 
@@ -72,8 +73,11 @@ $(LINK_CFG): FORCE
 		"freqhz=$$(awk 'BEGIN { printf "%d", $(FREQUENCY) * 1000000 }')" > $@.tmp
 	@if cmp -s $@.tmp $@; then rm -f $@.tmp; else mv -f $@.tmp $@; fi
 
-$(VBIN): $(PACKAGED) $(LINK_CFG)
+# VORTEX_PRE_OPT_TCL, when set, runs before opt_design (see the Vitis
+# platform); the linker can only attach it from a pre-synthesis hook.
+$(VBIN): $(PACKAGED) $(LINK_CFG) scripts/attach_pre_opt.tcl
 	mkdir -p $(BUILD_DIR)
-	$(SLASHKIT) link -c $(LINK_CFG) -p $(TARGET) -o $@ -k $(PACKAGED) --vivado $(VIVADO)
+	$(SLASHKIT) link -c $(LINK_CFG) -p $(TARGET) -o $@ -k $(PACKAGED) --vivado $(VIVADO) \
+		--pre-synth-tcls $(buildroot)/scripts/attach_pre_opt.tcl
 
 FORCE:
