@@ -66,6 +66,11 @@ case object HasDMAChannel extends Field[Boolean]
 // Enables multi-cycle RAM model generation (as demonstrated in the ICCAD2019 paper)
 case object GenerateMultiCycleRamModels extends Field[Boolean](false)
 
+/** Gate host clocks in fabric instead of with BUFGCE, for a platform whose user region has no BUFGCE sites (the Alveo
+  * V80 compute shell's reconfigurable partition offers only BUFG_FABRIC).
+  */
+case object FabricClockGates extends Field[Boolean](false)
+
 // Enables multithreading of repeated instances of annotated models
 case object EnableModelMultiThreading extends Field[Boolean](false)
 
@@ -285,6 +290,7 @@ class AvedConfig
       case StreamEngineInstantiatorKey =>
         (e: StreamEngineParameters, p: Parameters) => new FPGAManagedStreamEngine(p, e)
       case CtrlNastiKey                => NastiParameters(32, 12, 1)
+      case FabricClockGates            => true
       case HostMemChannelKey           =>
         HostMemChannelParams(
           size      = 0x400000000L, // 16 GiB
