@@ -145,6 +145,13 @@ ifeq ($(DEBUG), yes)
 	VPP_LDFLAGS += --debug.list_ports
 endif
 
+# Tcl the link runs on impl_1 before opt_design, for a target design whose
+# netlist needs resolving after synthesis (Vortex fills its async-BRAM black
+# boxes this way).
+ifneq ($(VORTEX_PRE_OPT_TCL),)
+	VPP_LDFLAGS += --xp "vivado_prop:run.impl_1.STEPS.OPT_DESIGN.TCL.PRE=$(abspath $(VORTEX_PRE_OPT_TCL))"
+endif
+
 VIVADO := $(XILINX_VIVADO)/bin/vivado
 
 # I'm strugging to get Vitis to accept verilog macros passed in on the command
