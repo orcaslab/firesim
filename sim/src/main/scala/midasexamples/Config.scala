@@ -29,6 +29,14 @@ class BaseMidasExamplesConfig
         })
     )
 
+// Versal has no `ila` core, so AutoILA stays off on the V80.
+class DefaultAvedConfig
+    extends Config(
+      new Config((_, _, _) => { case EnableAutoILA => false }) ++
+        new BaseMidasExamplesConfig ++
+        new midas.AvedConfig
+    )
+
 class DefaultF1Config
     extends Config(
       new BaseMidasExamplesConfig ++

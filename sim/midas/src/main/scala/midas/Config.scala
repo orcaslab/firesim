@@ -274,6 +274,28 @@ class VitisConfig
       case PostLinkCircuitPath         => None
     }) ++ new SimConfig)
 
+/** AMD Alveo V80 through the SLASH compute shell. Control is MMIO only; no
+  * streams are available, so a bridge that needs one fails at elaboration.
+  */
+class AvedConfig
+    extends Config(new Config((_, _, _) => {
+      case Platform                    => (p: Parameters) => new AvedShim()(p)
+      case CPUManagedAXI4Key           => None
+      case FPGAManagedAXI4Key          => None
+      case StreamEngineInstantiatorKey =>
+        (e: StreamEngineParameters, p: Parameters) => new FPGAManagedStreamEngine(p, e)
+      case CtrlNastiKey                => NastiParameters(32, 12, 1)
+      case HostMemChannelKey           =>
+        HostMemChannelParams(
+          size      = 0x400000000L, // 16 GiB
+          beatBytes = 8,
+          idBits    = 16,
+        )
+      case HostMemNumChannels          => 1
+      case PreLinkCircuitPath          => None
+      case PostLinkCircuitPath         => None
+    }) ++ new SimConfig)
+
 // Turns on all additional synthesizable debug features for checking the
 // implementation of the simulator.
 class HostDebugFeatures
