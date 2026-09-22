@@ -98,17 +98,18 @@ foreach script $ipgen_scripts {
 }
 
 # The design under test may instantiate vendor cores it does not generate itself
-# (Vortex's FPU and RTU use Xilinx floating_point IP on Vivado). Those are
-# generated ahead of packaging, for this part, and read in here so they are
-# generated and packaged with the kernel like the shim's own IP.
+# (Vortex's FPU and RTU use Xilinx floating_point IP on Vivado). They are
+# generated ahead of packaging, for this part, and attached to the packaged core
+# below. Not read into this project: nothing here instantiates them -- the
+# design sources are withheld from it -- so the packager would drop them as
+# unreferenced.
+set vortex_ips {}
 if {[info exists ::env(VORTEX_XILINX_IP_DIR)]} {
     set vortex_ips [glob -nocomplain $::env(VORTEX_XILINX_IP_DIR)/*/*.xci]
     if {[llength $vortex_ips] == 0} {
         puts "ERROR: VORTEX_XILINX_IP_DIR has no generated cores: $::env(VORTEX_XILINX_IP_DIR)"
         exit 1
     }
-    read_ip $vortex_ips
-    puts "read [llength $vortex_ips] design IP cores from $::env(VORTEX_XILINX_IP_DIR)"
 }
 
 # Use RTL models instead of systemC-based ones for Xilinx IP.
@@ -184,6 +185,25 @@ if {[info exists vortex_files] && [llength $vortex_files] > 0} {
         }
     }
     puts "attached [llength $vortex_files] design sources to the packaged core"
+}
+
+# Deliver the vendor cores the design sources instantiate, as customized IP in
+# both file groups. Each core directory is copied whole so the core is
+# regenerated from its own .xci at delivery, for whatever part the link uses.
+if {[llength $vortex_ips] > 0} {
+    set target_fgs [list \
+        [ipx::get_file_groups xilinx_anylanguagesynthesis -of_objects $core] \
+        [ipx::get_file_groups xilinx_anylanguagebehavioralsimulation -of_objects $core]]
+    file mkdir $path_to_packaged/src/ip
+    foreach xci $vortex_ips {
+        set name [file rootname [file tail $xci]]
+        file copy -force [file dirname $xci] $path_to_packaged/src/ip/$name
+        foreach fg $target_fgs {
+            set added [ipx::add_file src/ip/$name/$name.xci $fg]
+            set_property type xci $added
+        }
+    }
+    puts "attached [llength $vortex_ips] design IP cores to the packaged core"
 }
 
 ipx::create_xgui_files $core
