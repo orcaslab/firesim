@@ -57,6 +57,11 @@ $(eval $(call built_within_conda_only_driver_compilation_rules,rhsresearch_nitef
 # these compilation flags are only guaranteed to work for ubuntu 20.04/18.04 (other OS's are not supported since vitis is experimental)
 $(vitis): export CXXFLAGS := $(CXXFLAGS) $(common_cxx_flags) $(DRIVER_CXXOPTS) \
 	-idirafter ${CONDA_PREFIX}/include -idirafter /usr/include -idirafter $(XILINX_XRT)/include
+# The driver links XRT, which is built against the host glibc, so it must be
+# compiled by the host toolchain. Conda's compiler links its own glibc-2.17
+# start files, which reference __libc_csu_init/fini -- symbols glibc 2.34
+# removed -- and the link fails on any current host.
+$(vitis): export CXX := /usr/bin/g++
 # -ldl needed for Ubuntu 20.04 systems (is backwards compatible with U18.04 systems)
 $(vitis): export LDFLAGS := $(LDFLAGS) $(common_ld_flags) -Wl,-rpath='$$$$ORIGIN' \
 	-L${CONDA_PREFIX}/lib -Wl,-rpath-link=/usr/lib/x86_64-linux-gnu -L/usr/lib/x86_64-linux-gnu -L$(XILINX_XRT)/lib -luuid -lxrt_coreutil -ldl -lz
