@@ -688,6 +688,8 @@ class FPGATopImp(outer: FPGATop)(implicit p: Parameters) extends LazyModuleImp(o
 
     sb.append(s",\n.mem_num_channels = ${outer.memAXI4Nodes.length}")
     sb.append(f",\n.mem_base = 0x${p(HostMemBaseAddressKey)}%xULL")
+    sb.append(s",\n.master_presence_read = ${outer.crByteAddr(outer.master, "PRESENCE_READ")}")
+    sb.append(s",\n.master_presence_write = ${outer.crByteAddr(outer.master, "PRESENCE_WRITE")}")
 
     sb.append(",\n.cpu_managed = ")
     confCPUManaged match {

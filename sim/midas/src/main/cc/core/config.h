@@ -64,6 +64,10 @@ struct TargetConfig {
   const unsigned mem_num_channels;
   /// Device address the platform binds the host-memory port to.
   const uint64_t mem_base;
+  /// SimulationMaster's fingerprint registers, so a platform can prove its
+  /// control path before any widget touches the device.
+  const uint64_t master_presence_read;
+  const uint64_t master_presence_write;
 
   const std::optional<AXI4Config> cpu_managed;
 

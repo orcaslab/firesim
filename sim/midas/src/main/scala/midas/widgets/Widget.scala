@@ -366,6 +366,9 @@ trait HasWidgets {
     widgets.foreach((w: Widget) => println(w.getWName))
   }
 
+  /** Byte address of a widget's control register in the control space. */
+  def crByteAddr(w: Widget, crName: String): BigInt = addrMap(w.getWName).start + w.getCRAddr(crName)
+
   def getCRAddr(wName: String, crName: String)(implicit channelWidth: Int): BigInt = {
     val widget = name2inst.get(wName).getOrElse(throw new RuntimeException("Could not find Widget: $wName"))
     getCRAddr(widget, crName)

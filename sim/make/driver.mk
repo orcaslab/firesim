@@ -77,5 +77,25 @@ $(vitis): $(header) $(DRIVER_CC) $(DRIVER_H) $(midas_cc) $(midas_h)
 		OUT_DIR=$(OUTPUT_DIR) \
 		DRIVER="$(DRIVER_CC)"
 
+# AMD Alveo V80 through SLASH: the driver links VRT, which like XRT is built
+# against the host glibc, so it too is compiled by the host toolchain. VRT's
+# public headers include jsoncpp's and libxml2's.
+$(aved): export CXX := /usr/bin/g++
+$(aved): export CXXFLAGS := $(CXXFLAGS) $(common_cxx_flags) $(DRIVER_CXXOPTS) \
+	-idirafter ${CONDA_PREFIX}/include -idirafter /usr/include \
+	$(shell pkg-config --cflags jsoncpp libxml-2.0)
+$(aved): export LDFLAGS := $(LDFLAGS) $(common_ld_flags) -Wl,-rpath='$$$$ORIGIN' \
+	-L${CONDA_PREFIX}/lib -Wl,-rpath-link=/usr/lib/x86_64-linux-gnu -L/usr/lib/x86_64-linux-gnu -lvrt -ldl -lz
+
+$(aved): $(header) $(DRIVER_CC) $(DRIVER_H) $(midas_cc) $(midas_h)
+	mkdir -p $(OUTPUT_DIR)/build
+	cp $(header) $(OUTPUT_DIR)/build/
+	$(MAKE) -C $(simif_dir) driver MAIN=$(PLATFORM) PLATFORM=$(PLATFORM) \
+		DRIVER_NAME=$(DESIGN) \
+		GEN_FILE_BASENAME=$(BASE_FILE_NAME) \
+		GEN_DIR=$(OUTPUT_DIR)/build \
+		OUT_DIR=$(OUTPUT_DIR) \
+		DRIVER="$(DRIVER_CC)"
+
 tags: $(header) $(DRIVER_CC) $(DRIVER_H) $(midas_cc) $(midas_h)
 	ctags -R --exclude=@.ctagsignore .
