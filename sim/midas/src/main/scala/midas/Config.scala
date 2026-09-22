@@ -227,6 +227,10 @@ class XilinxVCU118Config
       case PostLinkCircuitPath         => Some("partition_wrapper/partition/firesim_top")
     }) ++ new SimConfig)
 
+/** Sets the device address the platform binds the host-memory port to. */
+class WithHostMemBase(base: BigInt)
+    extends Config((_, _, _) => { case HostMemBaseAddressKey => base })
+
 class VitisConfig
     extends Config(new Config((_, _, _) => {
       case Platform                    => (p: Parameters) => new VitisShim()(p)

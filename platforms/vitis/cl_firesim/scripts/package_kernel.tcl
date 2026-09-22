@@ -19,9 +19,15 @@ set path_to_hdl "../design"
 set path_to_packaged "./packaged_kernel_${suffix}"
 set path_to_tmp_project "./tmp_kernel_pack_${suffix}"
 
-# Upstream hardcodes the U250 part; the kernel-packaging project must use
-# the part of the target platform or its IP is generated for the wrong device.
-set projPart "xcu55c-fsvh2892-2L-e"
+# The kernel-packaging project must use the target platform's own part, or its
+# IP is generated for the wrong device. Read it from the platform rather than
+# naming one card.
+if {[catch {exec -ignorestderr platforminfo -p $xpfm_path} pinfo] ||
+    ![regexp -line {^Board Part:\s*(\S+)} $pinfo -> projPart]} {
+    puts "ERROR: cannot read the part of platform $xpfm_path from platforminfo"
+    exit 1
+}
+puts "packaging for part $projPart ($xpfm_path)"
 
 set base_filename "FireSim-generated"
 set synth_xdc_path "${path_to_hdl}/${base_filename}.synthesis.xdc"

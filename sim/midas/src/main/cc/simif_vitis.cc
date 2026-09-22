@@ -65,20 +65,7 @@ private:
 /// `--connectivity.sp` must bind host_mem_0 to a matching range (HOST_MEM_SP in
 /// the Vitis kernel Makefile). The two are a pair: widening one alone silently
 /// truncates.
-constexpr size_t host_mem_0_size_default = 4ULL * 1024 * 1024 * 1024;
-
-/// Overridable so a smaller window can be paired with a narrower
-/// `--connectivity.sp`, which is what makes a single-channel control experiment
-/// possible without editing and rebuilding this file.
-static size_t host_mem_0_size() {
-  if (const char *env = getenv("FIRESIM_HOST_MEM_SIZE")) {
-    const unsigned long long v = strtoull(env, nullptr, 0);
-    if (v > 0) {
-      return static_cast<size_t>(v);
-    }
-  }
-  return host_mem_0_size_default;
-}
+constexpr size_t host_mem_0_size = 4ULL * 1024 * 1024 * 1024;
 
 /// Allocates the device-memory window backing host_mem_0, choosing a memory
 /// region that can hold all of it. Tries the largest usable regions first so a
@@ -169,16 +156,28 @@ simif_vitis_t::simif_vitis_t(const TargetConfig &config,
   // xclbin reports until one can back the whole window, and fail loudly with
   // the topology printed if none can. Quietly settling for a smaller region is
   // the exact failure this window size exists to prevent.
-  fpga_mem_0 = allocate_host_mem(device_handle, binary_file, host_mem_0_size());
+  fpga_mem_0 = allocate_host_mem(device_handle, binary_file, host_mem_0_size);
 
   // NOTE: the kernel's host_mem_0_offset register (package_kernel.tcl, s_axi_lite
   // 0x010) is IP-XACT metadata only -- it does not appear in the generated RTL,
   // and writing it would land in FireSim's own widget MMIO space. Address
   // mapping into HBM is done by the platform memory subsystem via
   // --connectivity.sp, so nothing needs programming here.
+  //
+  // The shim adds a base fixed at elaboration (conf.mem_base) to every
+  // host_mem_0 access. If the memory the binding actually resolves to starts
+  // anywhere else, every access misses it: reads return a fixed bus default
+  // and writes are dropped, with the control plane still working.
   std::cerr << "[vitis] host_mem_0 base = 0x" << std::hex
-           << fpga_mem_0.address() << " size = 0x" << host_mem_0_size()
-           << std::dec << std::endl;
+            << fpga_mem_0.address() << " size = 0x" << host_mem_0_size
+            << std::dec << std::endl;
+  if (fpga_mem_0.address() != config.mem_base) {
+    std::cerr << "[vitis] host_mem_0 is at 0x" << std::hex
+              << fpga_mem_0.address() << " but the shim was elaborated for 0x"
+              << config.mem_base << std::dec
+              << "; rebuild with the platform's memory base" << std::endl;
+    throw std::runtime_error("host_mem_0 base does not match the elaborated shim");
+  }
 }
 
 void simif_vitis_t::write(size_t addr, uint32_t data) {

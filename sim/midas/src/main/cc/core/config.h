@@ -62,6 +62,8 @@ struct TargetConfig {
 
   const AXI4Config mem;
   const unsigned mem_num_channels;
+  /// Device address the platform binds the host-memory port to.
+  const uint64_t mem_base;
 
   const std::optional<AXI4Config> cpu_managed;
 

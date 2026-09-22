@@ -7,7 +7,7 @@ import freechips.rocketchip.amba.axi4._
 import org.chipsalliance.cde.config.Parameters
 import freechips.rocketchip.diplomacy.LazyRawModuleImp
 
-import midas.core.HostMemChannelKey
+import midas.core.{HostMemBaseAddressKey, HostMemChannelKey}
 import midas.widgets.CtrlNastiKey
 import midas.stage.GoldenGateOutputFileAnnotation
 import midas.platform.xilinx._
@@ -21,25 +21,6 @@ object VitisConstants {
 
   /** The hardcoded TCL variable name used to specify the simulator's frequency */
   val frequencyVariableName = "frequency"
-
-  /** Base address added to every host_mem_0 access.
-    *
-    * The shim drives absolute device addresses, so this must match the base of
-    * whatever memory resource `--connectivity.sp` binds host_mem_0 to.
-    *
-    *   U250 / U280, DDR[0]        -> 0x4000000000
-    *   U55C, HBM[0] (HBM-only)    -> 0x0, with a 512 MB (29-bit) aperture
-    *
-    * Upstream hardcoded the U250 DDR base inline. On an HBM part every access
-    * then lands far outside the bound pseudo-channel: reads return a fixed bus
-    * default independent of address and writes are dropped, so the target DRAM
-    * path is silently dead while the control plane still works.
-    *
-    * A proper upstream fix makes this a Config field keyed off the platform
-    * rather than a constant; it is a constant here because this tree targets
-    * one card.
-    */
-  val hostMemBaseAddress = 0x0L
 }
 
 class VitisShim(implicit p: Parameters) extends PlatformShim {
@@ -108,10 +89,11 @@ class VitisShim(implicit p: Parameters) extends PlatformShim {
       host_mem_cdc.io.s_axi.drivenByStandardAXI4(top.module.mem(0), hostClock, hostSyncReset)
       host_mem_cdc.io.s_axi_aclk    := hostClock
       host_mem_cdc.io.s_axi_aresetn := (!hostSyncReset).asAsyncReset
-      host_mem_cdc.io.s_axi.araddr  :=
-        VitisConstants.hostMemBaseAddress.U(addrWidth) + top.module.mem(0).ar.bits.addr
-      host_mem_cdc.io.s_axi.awaddr  :=
-        VitisConstants.hostMemBaseAddress.U(addrWidth) + top.module.mem(0).aw.bits.addr
+      // The port drives absolute device addresses: the base of whatever memory
+      // resource `--connectivity.sp` binds host_mem_0 to.
+      val hostMemBase = p(HostMemBaseAddressKey).U(addrWidth)
+      host_mem_cdc.io.s_axi.araddr  := hostMemBase + top.module.mem(0).ar.bits.addr
+      host_mem_cdc.io.s_axi.awaddr  := hostMemBase + top.module.mem(0).aw.bits.addr
       host_mem_cdc.io.s_axi.arcache.foreach { _ := AXI4Parameters.CACHE_MODIFIABLE }
       host_mem_cdc.io.s_axi.awcache.foreach { _ := AXI4Parameters.CACHE_MODIFIABLE }
 

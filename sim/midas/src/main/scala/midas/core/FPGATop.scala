@@ -43,6 +43,12 @@ case object FPGAManagedAXI4Key extends Field[Option[FPGAManagedAXI4Params]]
 case object HostMemChannelKey  extends Field[HostMemChannelParams]
 // The number of host-DRAM channels -> all channels must have the same AXI4 widths
 case object HostMemNumChannels extends Field[Int]
+
+/** Device address of the memory resource the platform binds the host-memory
+  * port to. The shim adds it to every access, and the driver checks the memory
+  * it was given against it, so the two cannot silently disagree.
+  */
+case object HostMemBaseAddressKey extends Field[BigInt](BigInt(0))
 // See widgets/Widget.scala for CtrlNastiKey -> Configures the simulation control bus
 
 /** DRAM Allocation Knobs
@@ -681,6 +687,7 @@ class FPGATopImp(outer: FPGATop)(implicit p: Parameters) extends LazyModuleImp(o
     printAXIConfig(confMem)
 
     sb.append(s",\n.mem_num_channels = ${outer.memAXI4Nodes.length}")
+    sb.append(f",\n.mem_base = 0x${p(HostMemBaseAddressKey)}%xULL")
 
     sb.append(",\n.cpu_managed = ")
     confCPUManaged match {
