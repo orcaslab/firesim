@@ -10,7 +10,11 @@ public:
 
   ~simif_emul_all_t() {}
 
-  int run(simulation_t &sim);
+  int run(simulation_t &sim) override;
+
+  // run() hands off to the driver thread and returns before the simulation has
+  // even started, so its caller must leave the interface standing.
+  bool run_blocks_until_done() const override { return false; }
 
 private:
   int argc;

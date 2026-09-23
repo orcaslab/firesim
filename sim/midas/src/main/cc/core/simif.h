@@ -83,6 +83,17 @@ public:
    */
   virtual int run(simulation_t &sim);
 
+  /**
+   * Whether run() returns only once the simulation has finished.
+   *
+   * True for the FPGA platforms, whose run() drives the whole simulation and
+   * returns its result. The metasimulator's run() instead spawns the driver
+   * thread and returns immediately, leaving the Verilog clock to drive it
+   * through the DPI tick, so on its return the interface is still in use and
+   * must not be torn down.
+   */
+  virtual bool run_blocks_until_done() const { return true; }
+
 protected:
   /**
    * Target configuration.

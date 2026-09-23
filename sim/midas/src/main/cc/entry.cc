@@ -95,7 +95,16 @@ int entry(int argc, char **argv) {
   // XRT's device registry among them -- and by the time exit handlers run those
   // may already be gone, so destroying the interface then walks freed state.
   // Order mirrors construction. Nothing below may use `simif`.
-  simulation.reset();
-  simulator.reset();
+  //
+  // Only where run() ran the simulation to completion. The metasimulator's
+  // returns as soon as the driver thread is spawned, and this runs from a
+  // Verilog initial block, before the first clock edge: tearing down there
+  // destroys a condition variable the driver thread is still waiting on, and
+  // pthread_cond_destroy blocks on its waiter, so the simulator hangs having
+  // never advanced a cycle. That path exits from the DPI thread instead.
+  if (simif.run_blocks_until_done()) {
+    simulation.reset();
+    simulator.reset();
+  }
   return rc;
 }
