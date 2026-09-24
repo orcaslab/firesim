@@ -120,7 +120,13 @@ PACKAGE_OUT = ./package.$(TARGET)
 VPP := $(XILINX_VITIS)/bin/v++
 # Arguments passed to v++. Note, this will run out of the $(SIM_DIR) or
 # $(BITSTREAM_DIR) so relative paths can use $(SUB_DIR)
-VPP_OTHER_FLAGS += --save-temps -R2 -g
+# VPP_DEBUG builds the kernel for debug. Under hw_emu that makes XRT launch the
+# waveform flavour of the simulation, which logs to a .wdb whatever xrt.ini
+# says -- about 35 MB per thousand target cycles for a GPU target -- and
+# compiles the model for full visibility rather than speed. Clear it for long
+# emulation runs.
+VPP_DEBUG ?= -g
+VPP_OTHER_FLAGS += --save-temps -R2 $(VPP_DEBUG)
 VPP_MSG_FLAGS = --message-rules $(MSG_RULES) --log_dir $(LOG_SUBDIR) --report_dir $(REPORT_SUBDIR)
 VPP_COMMON_ARGS = \
 	--platform $(DEVICE) \
