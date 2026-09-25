@@ -73,9 +73,11 @@ $(LINK_CFG): FORCE
 		"freqhz=$$(awk 'BEGIN { printf "%d", $(FREQUENCY) * 1000000 }')" > $@.tmp
 	@if cmp -s $@.tmp $@; then rm -f $@.tmp; else mv -f $@.tmp $@; fi
 
-# VORTEX_PRE_OPT_TCL, when set, runs before opt_design (see the Vitis
-# platform); the linker can only attach it from a pre-synthesis hook.
-$(VBIN): $(PACKAGED) $(LINK_CFG) scripts/attach_pre_opt.tcl
+# The pre-synthesis hook turns on gated-clock conversion and attaches
+# scripts/pre_opt.tcl, which checks the conversion and then runs
+# VORTEX_PRE_OPT_TCL when set (see the Vitis platform). The linker can only
+# set run properties from a pre-synthesis hook.
+$(VBIN): $(PACKAGED) $(LINK_CFG) scripts/attach_pre_opt.tcl scripts/pre_opt.tcl
 	mkdir -p $(BUILD_DIR)
 	$(SLASHKIT) link -c $(LINK_CFG) -p $(TARGET) -o $@ -k $(PACKAGED) --vivado $(VIVADO) \
 		--pre-synth-tcls $(buildroot)/scripts/attach_pre_opt.tcl

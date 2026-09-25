@@ -15,9 +15,15 @@ package object xilinx {
   /** A clock gate for host regions that have no BUFGCE sites, such as the reconfigurable partition of the Alveo V80
     * compute shell, which offers only BUFG_FABRIC buffers.
     *
-    * It is the standard glitch-free gate: the enable passes through a latch that is transparent only while the clock
-    * is low, so it can change the output only while the clock is low, and the gated clock is put back on a global net
-    * by a BUFG_FABRIC. As with BUFGCE, an enable asserted before a rising edge passes that edge.
+    * In hardware it is not a gate at all: the AND below is marked for synth_design's gated-clock conversion, which
+    * moves the enable onto the clock-enable pin of every register, RAM and DSP the gated clock drives and clocks them
+    * from the ungated clock. A cell advances on a rising edge exactly when the enable is high at that edge -- BUFGCE's
+    * semantics -- and nothing is left on a derived clock.
+    *
+    * A real fabric gate cannot be made safe here. A latch-and-AND gate is only glitch-free if the clock reaches the
+    * latch no later than it reaches the AND, which placement does not guarantee and Vivado does not check (it runs no
+    * clock-gating check on a LUT), and its BUFG_FABRIC output arrives nanoseconds after the host clock that the rest
+    * of the simulator runs on. The platform build must enable the conversion and reject any cell it leaves unconverted.
     */
   object DefineFabricClockGate extends Transform with FunctionalPass[CircuitName] {
     val blackboxName = "FireSimFabricClockGate"
@@ -26,17 +32,17 @@ package object xilinx {
     val impl =
       s"""|`ifndef ${blackboxName.toUpperCase()}
           |`define ${blackboxName.toUpperCase()}
-          |(* keep_hierarchy = "yes" *)
           |module ${blackboxName}(
+          |`ifdef SYNTHESIS
+          |  (* gated_clock = "true" *) input I,
+          |`else
           |  input  I,
+          |`endif
           |  input  CE,
           |  output O
           |);
           |`ifdef SYNTHESIS
-          |  wire enable;
-          |  LDCE #(.INIT(1'b0), .IS_G_INVERTED(1'b1)) enable_latch (
-          |    .Q(enable), .D(CE), .G(I), .GE(1'b1), .CLR(1'b0));
-          |  BUFG_FABRIC gated_buffer (.I(I & enable), .O(O));
+          |  assign O = I & CE;
           |`else
           |  // The BUFGCE simulation model: the enable is sampled at each edge.
           |  /* verilator lint_off BLKSEQ */
