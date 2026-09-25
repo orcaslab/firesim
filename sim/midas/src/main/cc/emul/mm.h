@@ -6,6 +6,7 @@
 #include "core/config.h"
 
 #include <cstring>
+#include <deque>
 #include <queue>
 #include <stdint.h>
 
@@ -98,13 +99,13 @@ public:
   bool b_valid() override { return !bresp.empty(); }
   uint64_t b_resp() override { return 0; }
   uint64_t b_id() override { return b_valid() ? bresp.front() : 0; }
-  bool r_valid() override { return !rresp.empty(); }
+  bool r_valid() override { return cur_beat() != nullptr; }
   uint64_t r_resp() override { return 0; }
-  uint64_t r_id() override { return r_valid() ? rresp.front().id : 0; }
+  uint64_t r_id() override { return r_valid() ? cur_beat()->id : 0; }
   void *r_data() override {
-    return r_valid() ? &rresp.front().data[0] : &dummy_data[0];
+    return r_valid() ? const_cast<char *>(&cur_beat()->data[0]) : &dummy_data[0];
   }
-  bool r_last() override { return r_valid() ? rresp.front().last : false; }
+  bool r_last() override { return r_valid() ? cur_beat()->last : false; }
 
   void tick(bool reset,
 
@@ -138,6 +139,29 @@ protected:
   std::queue<uint64_t> bresp;
 
   std::queue<mm_rresp_t> rresp;
+
+  // Out-of-order responses, for exercising a design against memory that
+  // behaves like a real interconnect rather than an ideal one. Set by
+  // FIRESIM_MM_REORDER: 0 (default) returns every burst whole and in order;
+  // 1 returns bursts of different IDs in random order; 2 also interleaves
+  // their beats. Same-ID bursts always keep their order, as AXI requires.
+  // FIRESIM_MM_LATENCY delays every burst by that many cycles.
+  struct burst_t {
+    uint64_t ready_cycle;
+    std::deque<mm_rresp_t> beats;
+  };
+  int reorder_mode = 0;
+  uint64_t latency = 0;
+  std::deque<burst_t> bursts;
+  long selected = -1;
+  bool eligible(size_t i) const;
+  void select_burst();
+  const mm_rresp_t *cur_beat() const {
+    if (reorder_mode == 0) {
+      return rresp.empty() ? nullptr : &rresp.front();
+    }
+    return selected < 0 ? nullptr : &bursts[selected].beats.front();
+  }
 
   uint64_t cycle;
 };

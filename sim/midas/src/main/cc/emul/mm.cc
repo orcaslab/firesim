@@ -62,6 +62,51 @@ mm_t::~mm_t() {
 void mm_magic_t::init(size_t sz, int lsz) {
   mm_t::init(sz, lsz);
   dummy_data.resize(word_size);
+  if (const char *env = getenv("FIRESIM_MM_REORDER")) {
+    reorder_mode = atoi(env);
+  }
+  if (const char *env = getenv("FIRESIM_MM_LATENCY")) {
+    latency = strtoull(env, nullptr, 0);
+  }
+  if (reorder_mode != 0 || latency != 0) {
+    fprintf(stderr, "[mm] reorder=%d latency=%llu\n", reorder_mode,
+            (unsigned long long)latency);
+    if (reorder_mode == 0) {
+      reorder_mode = -1; // latency only: in order, but through bursts
+    }
+  }
+}
+
+// A burst may respond once its latency has elapsed and no older burst of the
+// same ID is still waiting.
+bool mm_magic_t::eligible(size_t i) const {
+  if (bursts[i].ready_cycle > cycle) {
+    return false;
+  }
+  const uint64_t id = bursts[i].beats.front().id;
+  for (size_t j = 0; j < i; ++j) {
+    if (bursts[j].beats.front().id == id) {
+      return false;
+    }
+  }
+  return true;
+}
+
+void mm_magic_t::select_burst() {
+  // A burst already under way keeps the channel unless beats may interleave.
+  if (selected >= 0 && reorder_mode != 2) {
+    return;
+  }
+  std::vector<size_t> ready;
+  for (size_t i = 0; i < bursts.size(); ++i) {
+    if (eligible(i)) {
+      ready.push_back(i);
+      if (reorder_mode < 0) {
+        break;
+      }
+    }
+  }
+  selected = ready.empty() ? -1 : (long)ready[rand() % ready.size()];
 }
 
 void mm_magic_t::tick(bool reset,
@@ -93,9 +138,17 @@ void mm_magic_t::tick(bool reset,
 
   if (ar_fire) {
     uint64_t start_addr = (ar_addr / word_size) * word_size;
+    burst_t b{cycle + latency, {}};
     for (int i = 0; i <= ar_len; i++) {
       auto dat = read(start_addr + i * word_size);
-      rresp.push(mm_rresp_t(ar_id, dat, i == ar_len));
+      if (reorder_mode == 0) {
+        rresp.push(mm_rresp_t(ar_id, dat, i == ar_len));
+      } else {
+        b.beats.push_back(mm_rresp_t(ar_id, dat, i == ar_len));
+      }
+    }
+    if (reorder_mode != 0) {
+      bursts.push_back(std::move(b));
     }
   }
 
@@ -122,16 +175,33 @@ void mm_magic_t::tick(bool reset,
   if (b_fire)
     bresp.pop();
 
-  if (r_fire)
-    rresp.pop();
+  if (r_fire) {
+    if (reorder_mode == 0) {
+      rresp.pop();
+    } else {
+      bursts[selected].beats.pop_front();
+      if (bursts[selected].beats.empty()) {
+        bursts.erase(bursts.begin() + selected);
+        selected = -1;
+      } else if (reorder_mode == 2) {
+        selected = -1;
+      }
+    }
+  }
 
   cycle++;
+
+  if (reorder_mode != 0) {
+    select_burst();
+  }
 
   if (reset) {
     while (!bresp.empty())
       bresp.pop();
     while (!rresp.empty())
       rresp.pop();
+    bursts.clear();
+    selected = -1;
     cycle = 0;
   }
 }
