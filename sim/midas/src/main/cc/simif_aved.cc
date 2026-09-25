@@ -51,6 +51,7 @@ public:
   uint32_t read(size_t addr) override;
 
 private:
+  void check_clock();
   void check_transport();
   void check_host_mem();
 
@@ -81,8 +82,34 @@ simif_aved_t::simif_aved_t(const TargetConfig &config,
   device = vrt::Device(bdf, binary_file, /*program=*/true);
   kernel = vrt::Kernel(device, kernel_name);
 
+  check_clock();
   check_transport();
   check_host_mem();
+}
+
+// The shell boots the kernel clock at its own rate, not at the one the image
+// was timed for, and only a VRT that programs the clock at open fixes that --
+// an older one leaves it, and the image then runs past its timing with nothing
+// to show for it but a target that misbehaves. So set the clock here and read
+// the wizard back before anything reaches the target.
+void simif_aved_t::check_clock() {
+  if (device.getPlatform() != vrt::Platform::HARDWARE) {
+    return;
+  }
+  const uint64_t timed_hz = device.getMaxFrequency();
+  if (timed_hz == 0) {
+    throw std::runtime_error("[aved] the image records no kernel clock frequency");
+  }
+  device.setFrequency(timed_hz);
+  const uint64_t actual_hz = device.getFrequency();
+  std::cerr << "[aved] kernel clock " << actual_hz << " Hz (image timed at "
+            << timed_hz << " Hz)" << std::endl;
+  // The wizard settles on the nearest rate its dividers reach, which can land
+  // a hair above the request; anything more is a clock the image never met.
+  if (actual_hz == 0 || actual_hz > timed_hz + timed_hz / 200) {
+    throw std::runtime_error("[aved] the kernel clock is not at the image's "
+                             "timed frequency; refusing to run the target");
+  }
 }
 
 // Proves the control path before any widget touches the device. A fixed
