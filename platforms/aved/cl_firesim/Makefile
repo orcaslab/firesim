@@ -37,7 +37,14 @@ BITSTREAM_DIR := $(buildroot)/bitstream
 BUILD_DIR     := $(BITSTREAM_DIR)/build_dir.$(TARGET)
 VBIN          := $(BUILD_DIR)/$(PROJECT_NAME).vbin
 LINK_CFG      := $(BITSTREAM_DIR)/link.$(TARGET).cfg
-PACKAGED      := $(BITSTREAM_DIR)/packaged_kernel/component.xml
+# Per TARGET: hw and sim package different flattenings of the same design, and
+# a kernel shared between them is linked into whichever image builds next.
+PACKAGED      := $(BUILD_DIR)/packaged_kernel/component.xml
+
+# The design under test is packaged with the simulator, so the kernel is stale
+# whenever it changes: its flattened source list is rewritten on every
+# regeneration, and the vendor cores leave a stamp per part.
+VORTEX_DEPS   := $(VORTEX_VIVADO_SRCS) $(wildcard $(VORTEX_XILINX_IP_DIR)/.part-*)
 
 # See the Vitis platform: the generated SV pulls its macro definitions in by an
 # `include rather than through the tool's define mechanism.
@@ -53,10 +60,10 @@ $(sv_processed): $(sv_generated)
 bitstream: $(VBIN)
 package: $(PACKAGED)
 
-$(PACKAGED): scripts/package_kernel.tcl $(sv_processed) $(sv_defines)
-	mkdir -p $(BITSTREAM_DIR)
-	cd $(BITSTREAM_DIR) && $(VIVADO) -mode batch -nojournal -log package_kernel.log \
-		-source $(buildroot)/scripts/package_kernel.tcl -tclargs $(DEVICE) $(BITSTREAM_DIR)
+$(PACKAGED): scripts/package_kernel.tcl $(sv_processed) $(sv_defines) $(VORTEX_DEPS)
+	mkdir -p $(BUILD_DIR)
+	cd $(BITSTREAM_DIR) && $(VIVADO) -mode batch -nojournal -log package_kernel.$(TARGET).log \
+		-source $(buildroot)/scripts/package_kernel.tcl -tclargs $(DEVICE) $(BUILD_DIR)
 
 # Rewritten on every run and only when its content changes, so a changed
 # binding or frequency relinks and an unchanged one does not.

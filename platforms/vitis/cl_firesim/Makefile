@@ -173,7 +173,12 @@ $(sv_processed): $(sv_generated)
 
 ipgen_scripts = $(shell find design/ -iname "*.ipgen.tcl")
 
-%.xo: scripts/package_kernel.tcl scripts/gen_xo.tcl $(sv_processed) $(sv_defines) $(ipgen_scripts) FREQUENCY
+# The design under test is packaged into the kernel too, so the kernel is stale
+# whenever it changes: its flattened source list is rewritten on every
+# regeneration, and the vendor cores leave a stamp per part.
+VORTEX_DEPS := $(VORTEX_VIVADO_SRCS) $(wildcard $(VORTEX_XILINX_IP_DIR)/.part-*)
+
+%.xo: scripts/package_kernel.tcl scripts/gen_xo.tcl $(sv_processed) $(sv_defines) $(ipgen_scripts) FREQUENCY $(VORTEX_DEPS)
 	mkdir -p $(@D)
 	# Move into the simulation or bitstream-build directory
 	cd $(@D)/..; $(VIVADO) -mode batch -source $(buildroot)/scripts/gen_xo.tcl \
