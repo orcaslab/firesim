@@ -138,15 +138,26 @@ object ImplementThreadedMems {
 
       val defaultConns = accessors.map(p => Connect(info, wsf(WRef(mem), p), WRef(p)))
 
+      // Each thread's buffered read data is replaced only when that thread's
+      // read was enabled at its target clock edge; otherwise it holds, which
+      // is the behaviour of a registered read port with a read enable.
+      val holdOnDisabledRead = sys.env.get("FAME5_MEM_HOLD").contains("1")
       val dataOutLogic = (rdMemNames ++ rwdMemNames).flatMap { case (topPName, doutMemName) =>
         val doutName    = if (rdMemNames.contains(topPName)) "data" else "rdata"
+        val isReader    = rdMemNames.contains(topPName)
+        val (enStmts, wEn): (Seq[Statement], Expression) =
+          if (holdOnDisabledRead && isReader) {
+            val (enAtEdge, enAtEdgeRef) = hostRegNext(ns.newName(s"${topPName}_en_edge"), WSubField(WRef(topPName), "en", BoolType))
+            val (enPipe, enPipedRef)    = pipeline(bramToBufferPipeDepth, enAtEdgeRef)
+            (Seq(enAtEdge, enPipe), And(edgeStatusPipedRef, enPipedRef))
+          } else (Nil, edgeStatusPipedRef)
         val doutMemRef  = WRef(doutMemName)
         val tmpNodeName = ns.newName(s"${topPName}_${doutName}_node")
 
         val doutNode                 = DefNode(info, tmpNodeName, wssf(WRef(mem), topPName, doutName))
         val (doutPipe, doutPipedRef) =
           pipeline(bramToBufferPipeDepth, WRef(tmpNodeName, tMem.proto.dataType, NodeKind, SourceFlow))
-        Seq(
+        enStmts ++ Seq(
           doutNode,
           doutPipe,
           Connect(info, wssf(doutMemRef, "r", "clk"), WRef(hostClockPort)),
@@ -155,7 +166,7 @@ object ImplementThreadedMems {
           Connect(info, wsf(WRef(topPName), doutName), wssf(doutMemRef, "r", "data")),
           Connect(info, wssf(doutMemRef, "w", "clk"), WRef(hostClockPort)),
           Connect(info, wssf(doutMemRef, "w", "addr"), tIdxPipedRef),
-          Connect(info, wssf(doutMemRef, "w", "en"), edgeStatusPipedRef),
+          Connect(info, wssf(doutMemRef, "w", "en"), wEn),
           Connect(info, wssf(doutMemRef, "w", "mask"), UIntLiteral(1)),
           Connect(info, wssf(doutMemRef, "w", "data"), doutPipedRef),
         )

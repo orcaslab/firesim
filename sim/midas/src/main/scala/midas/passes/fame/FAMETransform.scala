@@ -5,6 +5,7 @@ package midas.passes.fame
 import firrtl._
 import ir._
 import Mappers._
+import firrtl.traversals.Foreachers._
 import firrtl.Utils.BoolType
 import firrtl.transforms.DontTouchAnnotation
 import annotations._
@@ -344,15 +345,130 @@ object FAMEModuleTransformer {
       case s                                                         => s.map(onStmt).map(onExpr)
     }
 
-    val updatedBody = onStmt(m.body)
+    val updatedBody0 = onStmt(m.body)
+
+    // Eager outputs (FAME_EAGER_OUT=1, prototype): an output channel whose value
+    // depends on no input channel this cycle, and whose cone reaches only
+    // registers, nodes and wires, emits its cycle t+1 token in the host cycle
+    // that finishes cycle t, computed from the registers' next-state values.
+    // Under FAME-5 this lets a thread finish one target cycle per round instead
+    // of two when the rest of the design answers its outputs combinationally.
+    val eagerEnabled = sys.env.get("FAME_EAGER_OUT").contains("1")
+    val regDefs      = mutable.HashMap[String, DefRegister]()
+    val regNext      = mutable.HashMap[String, Expression]()
+    val nodeDefs     = mutable.HashMap[String, Expression]()
+    val wireDrive    = mutable.HashMap[String, Expression]()
+    val wireTypes    = mutable.HashMap[String, Type]()
+    val outDrive     = mutable.HashMap[String, Expression]()
+    val opaque       = mutable.HashSet[String]()
+    def scan(st: Statement): Unit = st match {
+      case r: DefRegister                       => regDefs(r.name) = r
+      case DefNode(_, n, e)                     => nodeDefs(n) = e
+      case Connect(_, WRef(n, _, RegKind, _), e)  => regNext(n) = e
+      case Connect(_, WRef(n, _, WireKind, _), e) => wireDrive(n) = e
+      case w: DefWire                           => wireTypes(w.name) = w.tpe
+      case Connect(_, WRef(n, _, PortKind, _), e) => outDrive(n) = e
+      case mem: DefMemory                       => opaque += mem.name
+      case i: WDefInstance                      => opaque += i.name
+      case other                                => other.foreach((x: Statement) => scan(x))
+    }
+    if (eagerEnabled) scan(m.body)
+    case class NotEager() extends Exception
+    // Generated values are wires: declared first, driven last, so their
+    // position never violates declare-before-use in the lowered body.
+    val eagerDecls  = mutable.ArrayBuffer[Statement]()
+    val eagerConns  = mutable.ArrayBuffer[Statement]()
+    val eagerMemo   = mutable.HashMap[String, Expression]()
+    def eagerWire(base: String, tpe: Type, value: => Expression): Expression = {
+      val w = DefWire(NoInfo, ns.newName(base), tpe)
+      eagerDecls += w
+      val ref = WRef(w.name, tpe, WireKind)
+      eagerConns += Connect(NoInfo, ref, value)
+      ref
+    }
+    def regNextOf(n: String): Expression = {
+      val r   = regDefs(n)
+      val nxt = regNext.getOrElse(n, WRef(r))
+      if (WrappedExpression(r.init) == WrappedExpression(WRef(r))) nxt
+      else Mux(r.reset, r.init, nxt, UnknownType)
+    }
+    def nextOf(e: Expression): Expression = e match {
+      case WRef(n, _, RegKind, _)                           => regNextOf(n)
+      case WRef(n, _, NodeKind, _) if nodeDefs.contains(n)  =>
+        eagerMemo.getOrElseUpdate(n, eagerWire(s"${n}_eager", nodeDefs(n).tpe, onExpr(nextOf(nodeDefs(n)))))
+      case WRef(n, _, WireKind, _) if wireDrive.contains(n) =>
+        eagerMemo.getOrElseUpdate(n, eagerWire(s"${n}_eager", wireTypes(n), onExpr(nextOf(wireDrive(n)))))
+      case _: WRef                                          => throw NotEager()
+      case WSubField(_, _, _, _)                            => throw NotEager()
+      case other                                            => other.map(nextOf)
+    }
+    // channel -> (port name -> next-cycle value)
+    val eagerOut = LinkedHashMap[FAME1OutputChannel, Map[String, Expression]]()
+    if (eagerEnabled) outChannels.foreach { o =>
+      if (ccDeps.get(o).forall(_.isEmpty)) {
+        val (d0, c0) = (eagerDecls.size, eagerConns.size)
+        val memo0    = eagerMemo.clone()
+        try {
+          eagerOut(o) = o.ports.map(p => p.name -> onExpr(nextOf(outDrive(p.name)))).toMap
+        } catch {
+          case _: NotEager | _: NoSuchElementException =>
+            eagerDecls.remove(d0, eagerDecls.size - d0); eagerConns.remove(c0, eagerConns.size - c0)
+            eagerMemo.clear(); eagerMemo ++= memo0
+        }
+      }
+    }
+    if (eagerEnabled) println(s"[FAME eager outputs] ${m.name}: ${eagerOut.size} of ${outChannels.size} output channels")
+
+    // Every eager port gets a <port>_cur wire holding its normal (cycle t)
+    // value; all reads of the port inside the model use it, so logic of the
+    // current cycle never sees the t+1 token, and no loop forms through it.
+    val eagerPorts = eagerOut.toSeq.flatMap { case (o, ports) =>
+      ports.toSeq.map { case (pn, e) => WrappedExpression.we(o.replacePortRef(WRef(pn))) -> (o, pn, e) }
+    }.toMap
+    val portTypes = m.ports.map(p => p.name -> p.tpe).toMap
+    val curWire = eagerPorts.map { case (k, (_, pn, _)) =>
+      val w = DefWire(NoInfo, ns.newName(s"${pn}_cur"), portTypes(pn))
+      eagerDecls += w
+      k -> WRef(w.name, portTypes(pn), WireKind)
+    }
+    def readsToCur(e: Expression): Expression = curWire.get(WrappedExpression.we(e)) match {
+      case Some(c) => c
+      case None    => e.map(readsToCur)
+    }
+    def withEagerBits(st: Statement): Statement = st match {
+      case Connect(info, lhs, rhs) if eagerPorts.contains(WrappedExpression.we(lhs)) =>
+        val (o, _, e) = eagerPorts(WrappedExpression.we(lhs))
+        val cur       = curWire(WrappedExpression.we(lhs))
+        Block(Connect(info, cur, readsToCur(rhs)), Connect(info, lhs, Mux(o.isFired, readsToCur(e), cur, UnknownType)))
+      case other => other.map(withEagerBits).map(readsToCur)
+    }
+    val updatedBody =
+      if (eagerOut.isEmpty) updatedBody0
+      else Block((eagerDecls.toSeq :+ withEagerBits(updatedBody0)) ++ eagerConns.toSeq.map {
+        case Connect(i, l, r) => Connect(i, l, readsToCur(r)); case x => x
+      })
+
+    def normalValid(o: FAME1OutputChannel): Expression =
+      And.reduce(ccDeps(o).map(_.isValid).toSeq :+ Negate(o.isFired))
+    def firedOrFiring(o: FAME1OutputChannel): Expression =
+      if (eagerOut.contains(o)) Or(o.isFired, And(o.isReady, normalValid(o))) else o.isFiredOrFiring
 
     // LI-BDN transformation step 5: add firing rules for output channels, trigger end of cycle
     // This is modified for multi-clock, as each channel fires only when associated clock is enabled
-    val allFiredOrFiring = And.reduce(outChannels.map(_.isFiredOrFiring) ++ inChannels.map(_.isValid))
+    val allFiredOrFiring = And.reduce(outChannels.map(firedOrFiring) ++ inChannels.map(_.isValid))
 
-    val channelStateRules = (inChannels ++ outChannels).map(c => c.updateFiredReg(WRef(finishing)))
+    val channelStateRules = inChannels.map(c => c.updateFiredReg(WRef(finishing))) ++ outChannels.map { o =>
+      if (!eagerOut.contains(o)) o.updateFiredReg(WRef(finishing))
+      else {
+        val eagerFire = And(o.isFired, o.isReady)
+        Connect(NoInfo, o.isFired, Mux(WRef(finishing), Or(Negate(o.clockDomainEnable), eagerFire), firedOrFiring(o), BoolType))
+      }
+    }
     val inputRules        = inChannels.map(i => i.setReady(WRef(finishing)))
-    val outputRules       = outChannels.map(o => o.setValid(WRef(finishing), ccDeps(o)))
+    val outputRules       = outChannels.map { o =>
+      if (!eagerOut.contains(o)) o.setValid(WRef(finishing), ccDeps(o))
+      else Connect(NoInfo, o.isValid, Or(normalValid(o), And(WRef(finishing), o.isFired)))
+    }
     val topRules          = Seq(
       clockChannel.setReady(allFiredOrFiring),
       Connect(NoInfo, WRef(finishing), And(allFiredOrFiring, clockChannel.isValid)),

@@ -67,7 +67,7 @@ class MiniTile(fir: Boolean, comb: Int) extends Module {
   core.io.out_ready := io.out.ready
 }
 
-class Fame5ProtoDUT(n: Int, fir: Boolean, comb: Int) extends Module {
+class Fame5ProtoDUT(n: Int, fir: Boolean, comb: Int, regReady: Boolean = false) extends Module {
   val io = IO(new Bundle {
     val sums   = Output(Vec(n, UInt(32.W)))
     val counts = Output(Vec(n, UInt(32.W)))
@@ -75,7 +75,8 @@ class Fame5ProtoDUT(n: Int, fir: Boolean, comb: Int) extends Module {
 
   def lfsrNext(r: UInt): UInt = Cat(r(0) ^ r(2) ^ r(3) ^ r(5), r(15, 1))
 
-  val tiles = Seq.fill(n)(Module(new MiniTile(fir, comb)))
+  // comb < 0: two module classes, half the tiles with each core variant.
+  val tiles = Seq.tabulate(n)(i => Module(new MiniTile(fir, if (comb < 0) i % 2 else comb)))
   tiles.foreach(t => annotate(EnableModelMultiThreadingAnnotation(t)))
 
   // Per-core stimulus, each from its own LFSR.
@@ -91,7 +92,10 @@ class Fame5ProtoDUT(n: Int, fir: Boolean, comb: Int) extends Module {
   val stall  = RegInit(0xace1.U(16.W))
   stall := lfsrNext(stall)
   val rr     = RegInit(0.U(log2Ceil(n).W))
-  val valids = VecInit(tiles.map(_.io.out.valid))
+  // regReady: each tile's output enters a 2-entry queue, so the ready a tile
+  // sees is registered rather than a function of every tile's valid.
+  val outs   = tiles.map(t => if (regReady) Queue(t.io.out, 2) else t.io.out)
+  val valids = VecInit(outs.map(_.valid))
   val order  = (0 until n).map(k => (rr +& k.U) % n.U)
   val hit    = order.map(idx => valids(idx))
   val grant  = PriorityMux(hit, order)
@@ -99,10 +103,10 @@ class Fame5ProtoDUT(n: Int, fir: Boolean, comb: Int) extends Module {
 
   val sums   = RegInit(VecInit(Seq.fill(n)(0.U(32.W))))
   val counts = RegInit(VecInit(Seq.fill(n)(0.U(32.W))))
-  tiles.zipWithIndex.foreach { case (t, i) =>
-    t.io.out.ready := any && grant === i.U
-    when(t.io.out.fire) {
-      sums(i)   := (sums(i) << 5) - sums(i) + t.io.out.bits
+  outs.zipWithIndex.foreach { case (o, i) =>
+    o.ready := any && grant === i.U
+    when(o.fire) {
+      sums(i)   := (sums(i) << 5) - sums(i) + o.bits
       counts(i) := counts(i) + 1.U
     }
   }
@@ -120,6 +124,12 @@ class Fame5ProtoF8C0(implicit p: Parameters)
     extends firesim.lib.testutils.PeekPokeHarness(() => new Fame5ProtoDUT(8, true, 0))
 class Fame5ProtoF8C1(implicit p: Parameters)
     extends firesim.lib.testutils.PeekPokeHarness(() => new Fame5ProtoDUT(8, true, 1))
+class Fame5ProtoF8C1Q(implicit p: Parameters)
+    extends firesim.lib.testutils.PeekPokeHarness(() => new Fame5ProtoDUT(8, true, 1, regReady = true))
+class Fame5ProtoF64C1Q(implicit p: Parameters)
+    extends firesim.lib.testutils.PeekPokeHarness(() => new Fame5ProtoDUT(64, true, 1, regReady = true))
+class Fame5ProtoF8Mix(implicit p: Parameters)
+    extends firesim.lib.testutils.PeekPokeHarness(() => new Fame5ProtoDUT(8, true, -1))
 class Fame5ProtoV64C1(implicit p: Parameters)
     extends firesim.lib.testutils.PeekPokeHarness(() => new Fame5ProtoDUT(64, false, 1))
 class Fame5ProtoF64C1(implicit p: Parameters)
