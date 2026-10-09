@@ -28,6 +28,24 @@ if {[llength $sim_runs] == 0} {
 foreach r $sim_runs {
     set_property STEPS.SYNTH_DESIGN.ARGS.GATED_CLOCK_CONVERSION on $r
     puts "INFO: gated-clock conversion enabled on $r"
+    # Threaded FAME-5 kernels can exceed synth_design's capacity in the
+    # cross-boundary optimization phase (abort at ~100 GB). RuntimeOptimized
+    # skips that phase; set it only when the caller asks.
+    if {[info exists ::env(VORTEX_SYNTH_DIRECTIVE)]} {
+        set_property STEPS.SYNTH_DESIGN.ARGS.DIRECTIVE $::env(VORTEX_SYNTH_DIRECTIVE) $r
+        puts "INFO: synth directive $::env(VORTEX_SYNTH_DIRECTIVE) on $r"
+    }
+    if {[info exists ::env(VORTEX_SYNTH_FLATTEN)]} {
+        set_property STEPS.SYNTH_DESIGN.ARGS.FLATTEN_HIERARCHY $::env(VORTEX_SYNTH_FLATTEN) $r
+        puts "INFO: synth flatten_hierarchy $::env(VORTEX_SYNTH_FLATTEN) on $r"
+    }
+}
+
+# Near-full threaded payloads can leave route_design circling on a last node
+# overlap under the default strategy's route directive; set only on request.
+if {[info exists ::env(VORTEX_ROUTE_DIRECTIVE)]} {
+    set_property STEPS.ROUTE_DESIGN.ARGS.DIRECTIVE $::env(VORTEX_ROUTE_DIRECTIVE) [get_runs impl_1]
+    puts "INFO: route directive $::env(VORTEX_ROUTE_DIRECTIVE) on impl_1"
 }
 
 set pre_opt [file normalize [file join [file dirname [info script]] pre_opt.tcl]]

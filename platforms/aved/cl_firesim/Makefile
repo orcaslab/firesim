@@ -31,6 +31,10 @@ HOST_MEM_SP ?= MEM
 FREQUENCY ?= 60
 
 SLASHKIT ?= slashkit
+# Parallel Vivado runs during link. The FAME-5 images synthesize one enormous
+# module whose peak memory approaches the whole machine; SLASHKIT_JOBS=1 gives
+# it the machine alone.
+SLASHKIT_JOBS ?= 8
 VIVADO := $(XILINX_VIVADO)/bin/vivado
 
 BITSTREAM_DIR := $(buildroot)/bitstream
@@ -87,6 +91,7 @@ $(LINK_CFG): FORCE
 $(VBIN): $(PACKAGED) $(LINK_CFG) scripts/attach_pre_opt.tcl scripts/pre_opt.tcl
 	mkdir -p $(BUILD_DIR)
 	$(SLASHKIT) link -c $(LINK_CFG) -p $(TARGET) -o $@ -k $(PACKAGED) --vivado $(VIVADO) \
+		--jobs $(SLASHKIT_JOBS) \
 		--pre-synth-tcls $(buildroot)/scripts/attach_pre_opt.tcl
 
 FORCE:
