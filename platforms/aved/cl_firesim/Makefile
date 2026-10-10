@@ -28,7 +28,7 @@ HOST_MEM_SP ?= MEM
 
 # Simulator clock (MHz, fractional allowed). There is no MMCM: the shell programs the kernel clock
 # to what the link records, and the simulator runs on it directly.
-FREQUENCY ?= 250
+FREQUENCY ?= 143
 
 SLASHKIT ?= slashkit
 # Parallel Vivado runs during link. The FAME-5 images synthesize one enormous
