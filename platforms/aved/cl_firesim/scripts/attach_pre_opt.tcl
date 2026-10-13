@@ -35,6 +35,12 @@ foreach r $sim_runs {
         set_property STEPS.SYNTH_DESIGN.ARGS.DIRECTIVE $::env(VORTEX_SYNTH_DIRECTIVE) $r
         puts "INFO: synth directive $::env(VORTEX_SYNTH_DIRECTIVE) on $r"
     }
+    # Models synthesized beforehand (partition_synth.py) are black boxes in
+    # this run; its post-synthesis hook links their netlists in.
+    if {[info exists ::env(FIRESIM_PARTITION_FILL)]} {
+        set_property STEPS.SYNTH_DESIGN.TCL.POST $::env(FIRESIM_PARTITION_FILL) $r
+        puts "INFO: partition netlists filled in by $::env(FIRESIM_PARTITION_FILL) on $r"
+    }
     if {[info exists ::env(VORTEX_SYNTH_FLATTEN)]} {
         set_property STEPS.SYNTH_DESIGN.ARGS.FLATTEN_HIERARCHY $::env(VORTEX_SYNTH_FLATTEN) $r
         puts "INFO: synth flatten_hierarchy $::env(VORTEX_SYNTH_FLATTEN) on $r"
