@@ -95,9 +95,11 @@ if [ "$IS_LIBRARY" = true ]; then
 else
     # create conda-lock only environment to be used in this section.
     # done with cloning base then installing conda lock to speed up dependency solving.
+    # python is pinned to firesim.yaml's range as well: conda-lock 2.5.7's vendored
+    # lark imports sre_parse, which newer pythons no longer have.
     CONDA_LOCK_ENV_PATH=$FDIR/.conda-lock-env
     rm -rf $CONDA_LOCK_ENV_PATH
-    conda create -y -p $CONDA_LOCK_ENV_PATH -c conda-forge $(grep "conda-lock" $FDIR/conda-reqs/firesim.yaml | sed 's/^ \+-//')
+    conda create -y -p $CONDA_LOCK_ENV_PATH -c conda-forge $(grep -E "^ +- (conda-lock|python)[=<>]" $FDIR/conda-reqs/firesim.yaml | sed 's/^ \+-//')
     source $(conda info --base)/etc/profile.d/conda.sh
     conda activate $CONDA_LOCK_ENV_PATH
 
