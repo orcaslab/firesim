@@ -100,13 +100,21 @@ void simif_aved_t::check_clock() {
   if (timed_hz == 0) {
     throw std::runtime_error("[aved] the image records no kernel clock frequency");
   }
-  device.setFrequency(timed_hz);
-  const uint64_t actual_hz = device.getFrequency();
+  // The wizard settles on the nearest rate its dividers reach, which can be
+  // a step above the request: lower the request below that step until the
+  // rate read back is one the image met.
+  uint64_t want_hz = timed_hz, actual_hz = 0;
+  for (int i = 0; i < 8; ++i) {
+    device.setFrequency(want_hz);
+    actual_hz = device.getFrequency();
+    if (actual_hz == 0 || actual_hz <= timed_hz) {
+      break;
+    }
+    want_hz -= (actual_hz - want_hz) + timed_hz / 100;
+  }
   std::cerr << "[aved] kernel clock " << actual_hz << " Hz (image timed at "
             << timed_hz << " Hz)" << std::endl;
-  // The wizard settles on the nearest rate its dividers reach, which can land
-  // a hair above the request; anything more is a clock the image never met.
-  if (actual_hz == 0 || actual_hz > timed_hz + timed_hz / 200) {
+  if (actual_hz == 0 || actual_hz > timed_hz) {
     throw std::runtime_error("[aved] the kernel clock is not at the image's "
                              "timed frequency; refusing to run the target");
   }
