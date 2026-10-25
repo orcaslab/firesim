@@ -82,7 +82,10 @@ PARTITION_STAMP := $(BITSTREAM_DIR)/partitions.$(TARGET).txt
 # The design under test is packaged with the simulator, so the kernel is stale
 # whenever it changes: its flattened source list is rewritten on every
 # regeneration, and the vendor cores leave a stamp per part.
-VORTEX_DEPS   := $(VORTEX_VIVADO_SRCS) $(wildcard $(VORTEX_XILINX_IP_DIR)/.part-*)
+# Which design is packaged: switching to another configuration's existing,
+# older source list must repackage too, which its timestamp alone never does.
+VORTEX_STAMP  := $(BITSTREAM_DIR)/vortex_srcs.$(TARGET).txt
+VORTEX_DEPS   := $(VORTEX_VIVADO_SRCS) $(wildcard $(VORTEX_XILINX_IP_DIR)/.part-*) $(VORTEX_STAMP)
 
 # See the Vitis platform: the generated SV pulls its macro definitions in by an
 # `include rather than through the tool's define mechanism.
@@ -94,6 +97,10 @@ sv_defines   = design/defines.vh
 $(PARTITION_STAMP): FORCE
 	@mkdir -p $(@D)
 	@echo "$(SYNTH_PARTITIONS)" | cmp -s - $@ || echo "$(SYNTH_PARTITIONS)" > $@
+
+$(VORTEX_STAMP): FORCE
+	@mkdir -p $(@D)
+	@echo "$(VORTEX_VIVADO_SRCS) $(VORTEX_XILINX_IP_DIR)" | cmp -s - $@ || echo "$(VORTEX_VIVADO_SRCS) $(VORTEX_XILINX_IP_DIR)" > $@
 
 # Partitions are black boxes to the kernel's synthesis.
 $(sv_processed): $(sv_generated) $(PARTITION_STAMP) $(SYNTH_REPLACE_SRC)
