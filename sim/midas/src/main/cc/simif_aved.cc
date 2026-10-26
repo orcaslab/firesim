@@ -54,6 +54,7 @@ private:
   void check_clock();
   void check_transport();
   void check_host_mem();
+  void park_clock() noexcept;
 
   std::string bdf;
   std::string binary_file;
@@ -82,9 +83,27 @@ simif_aved_t::simif_aved_t(const TargetConfig &config,
   device = vrt::Device(bdf, binary_file, /*program=*/true);
   kernel = vrt::Kernel(device, kernel_name);
 
-  check_clock();
-  check_transport();
-  check_host_mem();
+  // A target that fails its checks stays loaded; leave it clocked below any
+  // image's timing so it cannot disturb the shell before the next load.
+  try {
+    check_clock();
+    check_transport();
+    check_host_mem();
+  } catch (...) {
+    park_clock();
+    throw;
+  }
+}
+
+void simif_aved_t::park_clock() noexcept {
+  constexpr uint64_t kSafeHz = 50000000;
+  try {
+    if (device.getPlatform() == vrt::Platform::HARDWARE) {
+      device.setFrequency(kSafeHz);
+      std::cerr << "[aved] kernel clock parked at " << device.getFrequency() << " Hz" << std::endl;
+    }
+  } catch (...) {
+  }
 }
 
 // The shell boots the kernel clock at its own rate, not at the one the image
