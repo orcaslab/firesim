@@ -6,6 +6,35 @@
 | We held the First FireSim and Chipyard User/Developer Workshop at ASPLOS 2023 on March 26, 2023! This workshop featured a full-day of talks from users and developers in the FireSim and Chipyard community. YouTube videos of the talks are available on the [2023 Workshop Page](https://fires.im/workshop-2023/)! |
 |--------|
 
+## orcaslab/firesim: FireSim for the Vortex GPU on AMD Alveo V80 and U55C
+
+This is a fork of [firesim/firesim](https://github.com/firesim/firesim) (based on
+release 1.21.0) with full history. It adds:
+
+- **An AMD Alveo V80 platform (`aved`)** on the [SLASH](https://github.com/orcaslab/slash)
+  compute shell. The host driver, the SLASH build and the platform's Tcl run on the
+  V80. Fabric clock gates become clock enables, and the kernel clock is set and
+  checked: a target is never run above its timed rate.
+- **Alveo U55C (`vitis`) fixes:** a DRAM aperture, driver teardown, cycle accounting,
+  vendor IP cores packaged with the kernel, and a Tcl hook before `opt_design`.
+- **Golden Gate:** nested multi-class FAME-5 folding, knobs for large threaded
+  FAME-5 kernels, and models synthesized apart under a memory budget.
+
+[Vortex](https://github.com/vortexgpgpu/vortex) runs on it as a host-decoupled
+target (`hw/syn/firesim`) and pins the commit it was tested against (`FIRESIM_REV`
+in Vortex's `VERSION`). Build and use it as upstream FireSim
+(`./build-setup.sh`, [docs.fires.im](https://docs.fires.im)). Vortex's
+`docs/building_toolchain.md` (§12) and `docs/designs/firesim_integration.md`
+describe the V80 and U55C flows.
+
+**Related repositories:** [orcaslab/foldsim](https://github.com/orcaslab/foldsim)
+(FoldSim, the FAME-5 compiler compared with FireSim on the V80),
+[orcaslab/circt](https://github.com/orcaslab/circt),
+[orcaslab/beacon](https://github.com/orcaslab/beacon),
+[orcaslab/slash](https://github.com/orcaslab/slash).
+
+The rest of this file is upstream FireSim's README.
+
 ## Contents
 
 1. [Using FireSim](#using-firesim)
